@@ -2,3 +2,6 @@ streamlit
 pandas
 plotly
 openpyxl
+kaleido
+dataframe_image
+img2pdf
