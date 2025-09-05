@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import io # <--- NUEVO: Para manejar los datos en memoria
-import dataframe_image as dfi # <--- NUEVO: Para convertir tablas a imágenes
-import img2pdf # <--- NUEVO: Para unir imágenes en un PDF
+import io
+import dataframe_image as dfi
+import img2pdf
 
 # --- Configuración de la página ---
 st.set_page_config(page_title="Gestor de Vacaciones Avanzado", layout="wide", initial_sidebar_state="expanded")
@@ -20,32 +20,21 @@ uploaded_file = st.sidebar.file_uploader(
     help="El archivo debe contener las columnas: 'Empleado', 'Fecha_Inicio', 'Fecha_Fin' y 'Dias_Totales'."
 )
 
-
-# <--- NUEVO: Función para generar el reporte en PDF ---
 def create_pdf_report(df_summary, plotly_fig):
     """
     Genera un PDF a partir de un DataFrame y una figura de Plotly.
-    Convierte ambos a imágenes y los une en un PDF.
     """
-    # 1. Convertir el DataFrame de resumen en una imagen
-    # Usamos BytesIO para guardar la imagen en la memoria RAM en lugar de en un archivo
     summary_img_bytes = io.BytesIO()
-    # Estilo para la tabla en la imagen
     df_styled = df_summary.style.background_gradient(cmap='viridis').set_table_styles([{
         'selector': 'th',
         'props': [('background-color', '#4CAF50'), ('color', 'white')]
     }]).format("{:.0f}")
     dfi.export(df_styled, summary_img_bytes, table_conversion='matplotlib')
-    summary_img_bytes.seek(0) # Rebobinar el buffer
+    summary_img_bytes.seek(0)
 
-    # 2. Convertir la figura de Plotly en una imagen
     gantt_img_bytes = plotly_fig.to_image(format="png", width=1200, height=600, scale=2)
-
-    # 3. Combinar las imágenes en un PDF
-    # La lista de imágenes en bytes que formarán el PDF
     image_list = [summary_img_bytes.getvalue(), gantt_img_bytes]
     pdf_bytes = img2pdf.convert(image_list)
-    
     return pdf_bytes
 
 # --- Lógica principal ---
@@ -59,26 +48,37 @@ if uploaded_file is not None:
             st.error(f"❌ Error: El archivo Excel debe contener todas estas columnas: {', '.join(required_cols)}")
             st.stop()
 
-        # --- Cálculos ---
+        # --- Cálculos (Lógica corregida para evitar duplicados) ---
         df['Fecha_Inicio'] = pd.to_datetime(df['Fecha_Inicio'])
         df['Fecha_Fin'] = pd.to_datetime(df['Fecha_Fin'])
         df['Dias_Tomados_Periodo'] = (df['Fecha_Fin'] - df['Fecha_Inicio']).dt.days + 1
-        temp_df_agg = df.groupby('Empleado').agg(
-            Total_Dias_Tomados=('Dias_Tomados_Periodo', 'sum'),
-            Dias_Totales_Anuales=('Dias_Totales', 'first')
-        ).reset_index()
-        temp_df_agg['Dias_Restantes'] = temp_df_agg['Dias_Totales_Anuales'] - temp_df_agg['Total_Dias_Tomados']
-        df = pd.merge(df, temp_df_agg[['Empleado', 'Total_Dias_Tomados', 'Dias_Restantes', 'Dias_Totales_Anuales']], on='Empleado', how='left')
-        df.rename(columns={'Dias_Totales_Anuales': 'Dias_Totales'}, inplace=True)
+
+        # Agrupar para crear un resumen único por empleado
+        resumen_df = df.groupby('Empleado').agg(
+            # Tomamos el primer valor de Dias_Totales (asumiendo que es el mismo para el empleado)
+            Dias_Totales=('Dias_Totales', 'first'),
+            Total_Dias_Tomados=('Dias_Tomados_Periodo', 'sum')
+        ).reset_index() # <-- Importante: reset_index para que 'Empleado' vuelva a ser una columna
+
+        # Calcular los días restantes en este nuevo DataFrame de resumen
+        resumen_df['Dias_Restantes'] = resumen_df['Dias_Totales'] - resumen_df['Total_Dias_Tomados']
+        
+        # Unir los resultados agregados de vuelta al DataFrame original para el Gantt
+        df = pd.merge(df, resumen_df[['Empleado', 'Total_Dias_Tomados', 'Dias_Restantes']], on='Empleado', how='left')
 
         st.subheader("📋 Resumen de Días por Empleado")
-        resumen_df = df[['Empleado', 'Dias_Totales', 'Total_Dias_Tomados', 'Dias_Restantes']].drop_duplicates().set_index('Empleado')
-        st.dataframe(resumen_df.style.highlight_max(subset=['Dias_Restantes'], color='lightgreen').format("{:.0f}"), use_container_width=True)
+        # Ahora usamos el 'resumen_df' que ya es único por empleado
+        st.dataframe(
+            resumen_df.set_index('Empleado').style.highlight_max(
+                subset=['Dias_Restantes'], color='lightgreen'
+            ).format("{:.0f}"),
+            use_container_width=True
+        )
 
         st.markdown("---")
         st.subheader("🗓️ Diagrama de Gantt Interactivo de Vacaciones")
 
-        # --- Creación del Gráfico Gantt con Plotly (lo guardamos en la variable 'fig') ---
+        # --- Creación del Gráfico Gantt (sin cambios aquí) ---
         fig = px.timeline(
             df,
             x_start="Fecha_Inicio",
@@ -89,9 +89,16 @@ if uploaded_file is not None:
             title="Planificación de Vacaciones por Empleado",
             labels={"Fecha_Inicio": "Inicio", "Fecha_Fin": "Fin", "Empleado": "Nombre", "color": "Empleado"},
             hover_name="Empleado",
-            hover_data={"Fecha_Inicio": True, "Fecha_Fin": True, "Dias_Tomados_Periodo": True, "Dias_Totales": True, "Total_Dias_Tomados": True, "Dias_Restantes": True, "Empleado": False}
+            hover_data={
+                "Fecha_Inicio": True, 
+                "Fecha_Fin": True, 
+                "Dias_Tomados_Periodo": True, 
+                "Dias_Totales": True, 
+                "Total_Dias_Tomados": True, 
+                "Dias_Restantes": True, 
+                "Empleado": False
+            }
         )
-        # (El resto del código de personalización del gráfico es el mismo)
         fig.update_yaxes(autorange="reversed", title_text="Empleado", tickfont=dict(size=12))
         fig.update_xaxes(showgrid=True, tickformat="%d-%b-%Y", dtick="M1", rangeselector=dict(buttons=list([dict(count=1, label="1m", step="month", stepmode="backward"), dict(count=6, label="6m", step="month", stepmode="backward"), dict(count=1, label="YTD", step="year", stepmode="todate"), dict(count=1, label="1y", step="year", stepmode="backward"), dict(step="all")])), rangeslider=dict(visible=True), type="date")
         fig.update_traces(marker_line_width=1, marker_line_color='white', textposition='inside', textfont_size=12, textfont_color='black')
@@ -102,12 +109,12 @@ if uploaded_file is not None:
         
         st.markdown("---")
 
-        # <--- NUEVO: Botón de descarga para el PDF ---
         st.subheader("📥 Descargar Reporte Completo")
         st.write("Haz clic en el botón para descargar la tabla de resumen y el diagrama de Gantt en un solo archivo PDF, listo para imprimir.")
         
-        # Generar el PDF en memoria
-        pdf_bytes = create_pdf_report(resumen_df, fig)
+        # Preparamos el resumen_df para el PDF (con el índice correcto)
+        pdf_resumen_df = resumen_df.set_index('Empleado')
+        pdf_bytes = create_pdf_report(pdf_resumen_df, fig)
         
         st.download_button(
             label="Descargar Reporte en PDF 📄",
@@ -125,4 +132,3 @@ else:
 
 st.markdown("---")
 st.write("Desarrollado con Streamlit y Plotly.")
-
