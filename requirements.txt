@@ -6,4 +6,3 @@ kaleido
 dataframe_image
 img2pdf
 matplotlib
-
