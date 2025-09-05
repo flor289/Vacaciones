@@ -73,10 +73,8 @@ if uploaded_file is not None:
 
         st.subheader("📋 Resumen de Días por Empleado")
         st.dataframe(
-            resumen_df.set_index('Empleado').style.highlight_max(
-                subset=['Dias_Restantes'], color='lightgreen'
-            ).format("{:.0f}"),
-            use_container_width=True
+        resumen_df.set_index('Empleado').style.format("{:.0f}"),
+        use_container_width=True
         )
 
         st.markdown("---")
@@ -134,3 +132,4 @@ else:
 
 st.markdown("---")
 st.write("Desarrollado con Streamlit y Plotly.")
+
